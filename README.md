@@ -7,14 +7,14 @@ Frontend/UI development, Payment gateway integrations, Authentication/authorizat
 
 ---
 
-##### Inventory Service
+#### Inventory Service
 
 Manages product catalog, stock, price information.
 
 #### Order Service
 
 Handles order creation, retrieval, cancellation, and product availability against inventory.
-Rest API Endpoints:
+REST API Endpoints:
 - `POST /order`: Create a new order with multiple product items
 - `GET /order?id=`: Retrieve order details by ID
 - `GET /orders`: Retrieve all orders
@@ -38,7 +38,7 @@ Stores product catalog (inventory), orders and metadata persistently.
 ---
 
 #### Event-Driven Architecture (System Design):
-<img src="System_Architecture.png" alt="System Design Diagram" width="600" height="360">
+<img src="System_Architecture.png" alt="System Design Diagram" width="700" height="420">
 
 User places an order via the Order Service.
 
@@ -63,11 +63,11 @@ The structure is as follows:
 ├── go.mod                     # Go module file for dependency management
 ├── go.sum                  
 ├── inventory-service          # Inventory service microservice
-├── k8s                        # Kubernetes manifests for all services (ingress, namespace, secrets)
+├── k8s                        # Kubernetes deployment manifests for all services
 ├── order-processor            # Background job processor for order processing
 ├── order-service              # Order service microservice
 ├── pkg                        # Shared packages (mongoDB, Redis Stream) across all services
-├── queue-service              # Redis Stream service for order processing
+├── queue-service              # Redis Stream service for order queueing
 └── tests                      # Unit tests for order-service
 ```
 
@@ -87,7 +87,7 @@ Install minikube from [here](https://minikube.sigs.k8s.io/docs/start/?arch=%2Fwi
 
 Install Docker from [here](https://docs.docker.com/desktop/setup/install/windows-install/)
 
-Clone this repository.
+Clone this repository: `git clone https://github.com/dinesh-man/ecommerce-order-processing-system.git`
 
 **Build Docker images for all services**
 
