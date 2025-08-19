@@ -38,7 +38,7 @@ Stores product catalog (inventory), orders and metadata persistently.
 ---
 
 #### Event-Driven Architecture (System Design):
-<img src="System_Architecture.png" alt="System Design Diagram" width="700" height="420">
+<img src="System_Architecture.png" alt="System Design Diagram" width="800" height="480">
 
 User places an order via the Order Service.
 
