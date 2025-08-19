@@ -1,1 +1,96 @@
-package mongodbimport (	"context"	"crypto/tls"	"log"	"os"	"sync"	"time"	"go.mongodb.org/mongo-driver/mongo"	"go.mongodb.org/mongo-driver/mongo/options")var (	mongoClient  *mongo.Client	once         sync.Once	databaseName string)// InitMongoDB initializes a singleton MongoDB client using X.509 certfunc InitMongoDB() *mongo.Client {	uri := os.Getenv("MONGODB_URI")	if uri == "" {		log.Fatal("MONGODB_URI environment variable is required.")	}	databaseName = os.Getenv("MONGO_DB_NAME")	if databaseName == "" {		log.Fatal("MONGO_DB_NAME environment variable is required.")	}	certPath := os.Getenv("CERT_PATH")	if certPath == "" {		log.Fatal("CERT_PATH environment variable is required.")	}	once.Do(func() {		// Load X.509 client cert (public + private in same file)		cert, err := tls.LoadX509KeyPair(certPath, certPath)		if err != nil {			log.Fatalf("Failed to load X.509 certificate: %v", err)		}		// TLS config		tlsConfig := &tls.Config{			Certificates: []tls.Certificate{cert},		}		// Client options		clientOpts := options.Client().			ApplyURI(uri).			SetTLSConfig(tlsConfig).			SetMaxPoolSize(5) // connection pool limit		// Connect with timeout		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)		defer cancel()		client, err := mongo.Connect(ctx, clientOpts)		if err != nil {			log.Fatalf("Failed to connect to MongoDB: %v", err)		}		// Verify connection		if err := client.Ping(ctx, nil); err != nil {			log.Fatalf("MongoDB ping failed: %v", err)		}		log.Println("MongoDB connection established with X.509 authentication.")		mongoClient = client	})	return mongoClient}func GetCollection(name string) *mongo.Collection {	log.Println("Retrieving MongoDB Collection:", name)	if mongoClient == nil {		log.Println("MongoDB client not initialized. Calling InitMongoDB()...")		mongoClient = InitMongoDB()	}	return mongoClient.Database(databaseName).Collection(name)}func DisconnectMongo() {	if mongoClient != nil {		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)		defer cancel()		if err := mongoClient.Disconnect(ctx); err != nil {			log.Printf("Error disconnecting MongoDB: %v", err)		} else {			log.Println("MongoDB disconnected successfully")		}	}}
+package mongodb
+
+import (
+	"context"
+	"crypto/tls"
+	"log"
+	"os"
+	"sync"
+	"time"
+
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
+)
+
+var (
+	mongoClient  *mongo.Client
+	once         sync.Once
+	databaseName string
+)
+
+// InitMongoDB initializes a singleton MongoDB client using X.509 cert
+func InitMongoDB() *mongo.Client {
+
+	uri := os.Getenv("MONGODB_URI")
+	if uri == "" {
+		log.Fatal("MONGODB_URI environment variable is required.")
+	}
+
+	databaseName = os.Getenv("MONGO_DB_NAME")
+	if databaseName == "" {
+		log.Fatal("MONGO_DB_NAME environment variable is required.")
+	}
+
+	certPath := os.Getenv("CERT_PATH")
+	if certPath == "" {
+		log.Fatal("CERT_PATH environment variable is required.")
+	}
+
+	once.Do(func() {
+		// Load X.509 client cert (public + private in same file)
+		cert, err := tls.LoadX509KeyPair(certPath, certPath)
+		if err != nil {
+			log.Fatalf("Failed to load X.509 certificate: %v", err)
+		}
+
+		// TLS config
+		tlsConfig := &tls.Config{
+			Certificates: []tls.Certificate{cert},
+		}
+
+		// Client options
+		clientOpts := options.Client().
+			ApplyURI(uri).
+			SetTLSConfig(tlsConfig).
+			SetMaxPoolSize(5) // connection pool limit
+
+		// Connect with timeout
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		client, err := mongo.Connect(ctx, clientOpts)
+		if err != nil {
+			log.Fatalf("Failed to connect to MongoDB: %v", err)
+		}
+
+		// Verify connection
+		if err := client.Ping(ctx, nil); err != nil {
+			log.Fatalf("MongoDB ping failed: %v", err)
+		}
+
+		log.Println("MongoDB connection established with X.509 authentication.")
+		mongoClient = client
+	})
+	return mongoClient
+}
+
+func GetCollection(name string) *mongo.Collection {
+	log.Println("Retrieving MongoDB Collection:", name)
+	if mongoClient == nil {
+		log.Println("MongoDB client not initialized. Calling InitMongoDB()...")
+		mongoClient = InitMongoDB()
+	}
+	return mongoClient.Database(databaseName).Collection(name)
+}
+
+func DisconnectMongo() {
+	if mongoClient != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := mongoClient.Disconnect(ctx); err != nil {
+			log.Printf("Error disconnecting MongoDB: %v", err)
+		} else {
+			log.Println("MongoDB disconnected successfully")
+		}
+	}
+}

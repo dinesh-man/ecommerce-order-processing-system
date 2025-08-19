@@ -1,1 +1,186 @@
-package serviceimport (	"context"	"encoding/json"	"errors"	"fmt"	"log"	"net/http"	"time"	"github.com/dinesh-man/ecommerce-order-processing-system/pkg/models"	"github.com/dinesh-man/ecommerce-order-processing-system/pkg/mongodb"	"github.com/redis/go-redis/v9"	"go.mongodb.org/mongo-driver/bson"	"go.mongodb.org/mongo-driver/bson/primitive"	"go.mongodb.org/mongo-driver/mongo"	"go.mongodb.org/mongo-driver/mongo/options")var GetCollection = mongodb.GetCollectiontype OrderService struct {	collectionName      string	inventoryServiceURL string	rdb                 *redis.Client	streamKey           string}func NewOrderService(collectionName string, inventoryServiceURL string, rc *redis.Client, sk string) *OrderService {	return &OrderService{		collectionName:      collectionName,		inventoryServiceURL: inventoryServiceURL,		rdb:                 rc,		streamKey:           sk,	}}// CreateOrder inserts a new orderfunc (s *OrderService) CreateOrder(order models.Order) (*models.Order, error) {	collection := GetCollection(s.collectionName)	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)	defer cancel()	//Validate stock availability from inventory-service for each order	for _, item := range order.Items {		productURL := fmt.Sprintf("%s/product?id=%s", s.inventoryServiceURL, item.ProductID)		log.Println("fetching product details from inventory: ", productURL)		resp, err := http.Get(productURL)		if err != nil || resp.StatusCode != http.StatusOK {			return &order, fmt.Errorf("failed to fetch products from inventory-service")		}		defer resp.Body.Close()		var product models.Product		if err := json.NewDecoder(resp.Body).Decode(&product); err != nil {			return &order, fmt.Errorf("failed to decode product JSON: %w", err)		}		if product.Stock < item.Quantity {			log.Printf("insufficient stock for product %s, order auto cancelled. Product Stock: %d, Order Quantity: %d", item.ProductID, product.Stock, item.Quantity)			order.Status = "CANCELLED"			break		} else {			order.Status = "PENDING"		}	}	order.ID = primitive.NewObjectID()	order.CreatedAt = time.Now()	order.UpdatedAt = time.Now()	_, err := collection.InsertOne(ctx, order)	if err != nil {		return nil, err	}	// Enqueue the order in redis stream for further processing	args := &redis.XAddArgs{		Stream: s.streamKey,		Values: map[string]interface{}{"order_id": order.ID.Hex()},	}	if err := s.rdb.XAdd(context.Background(), args).Err(); err != nil {		log.Printf("failed to enqueue order: %v", err)	}	log.Printf("Order %s enqueued successfully\n", order.ID.Hex())	return &order, nil}// GetOrderByID fetches an order by its IDfunc (s *OrderService) GetOrderByID(id string) (*models.Order, error) {	collection := GetCollection(s.collectionName)	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)	defer cancel()	objID, err := primitive.ObjectIDFromHex(id)	if err != nil {		return nil, errors.New("invalid order ID")	}	var order models.Order	err = collection.FindOne(ctx, bson.M{"_id": objID}).Decode(&order)	if err != nil {		if errors.Is(err, mongo.ErrNoDocuments) {			return &models.Order{}, nil		}		return nil, err	}	return &order, nil}// ListOrders fetches all orders, optionally filtered by status and cursor-based paginationfunc (s *OrderService) ListOrders(status string, cursor string, pageSize int64) ([]models.Order, string, error) {	collection := GetCollection(s.collectionName)	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)	defer cancel()	filter := bson.M{}	if status != "" {		filter["status"] = status	}	// If cursor is provided, use it as starting point (ObjectID)	if cursor != "" {		lastID, err := primitive.ObjectIDFromHex(cursor)		if err != nil {			return nil, "", fmt.Errorf("invalid cursor")		}		filter["_id"] = bson.M{"$gt": lastID} // fetch documents with _id > lastID	}	// Sorted by _id ascending to maintain consistent pagination	findOptions := options.Find().		SetSort(bson.D{{Key: "_id", Value: 1}}).		SetLimit(pageSize)	cur, err := collection.Find(ctx, filter, findOptions)	if err != nil {		return nil, "", err	}	defer cur.Close(ctx)	var orders []models.Order	if err := cur.All(ctx, &orders); err != nil {		return nil, "", err	}	var nextCursor string	if len(orders) > 0 {		lastOrder := orders[len(orders)-1]		nextCursor = lastOrder.ID.Hex()	}	return orders, nextCursor, nil}// CancelOrder deletes the order but only if it’s still in PENDING status.func (s *OrderService) CancelOrder(id string) error {	collection := GetCollection(s.collectionName)	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)	defer cancel()	objID, err := primitive.ObjectIDFromHex(id)	if err != nil {		return errors.New("invalid order ID")	}	// Only delete if status is PENDING	res, err := collection.DeleteOne(		ctx,		bson.M{"_id": objID, "status": "PENDING"},	)	if err != nil {		return err	}	if res.DeletedCount == 0 {		return errors.New("order cannot be cancelled (either not PENDING or not found)")	}	return nil}
+package service
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
+	"net/http"
+	"time"
+
+	"github.com/dinesh-man/ecommerce-order-processing-system/pkg/models"
+	"github.com/dinesh-man/ecommerce-order-processing-system/pkg/mongodb"
+	"github.com/redis/go-redis/v9"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
+)
+
+var GetCollection = mongodb.GetCollection
+
+type OrderService struct {
+	collectionName      string
+	inventoryServiceURL string
+	rdb                 *redis.Client
+	streamKey           string
+}
+
+func NewOrderService(collectionName string, inventoryServiceURL string, rc *redis.Client, sk string) *OrderService {
+	return &OrderService{
+		collectionName:      collectionName,
+		inventoryServiceURL: inventoryServiceURL,
+		rdb:                 rc,
+		streamKey:           sk,
+	}
+}
+
+// CreateOrder inserts a new order
+func (s *OrderService) CreateOrder(order models.Order) (*models.Order, error) {
+
+	collection := GetCollection(s.collectionName)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	//Validate stock availability from inventory-service for each order
+	for _, item := range order.Items {
+
+		productURL := fmt.Sprintf("%s/product?id=%s", s.inventoryServiceURL, item.ProductID)
+		log.Println("fetching product details from inventory: ", productURL)
+
+		resp, err := http.Get(productURL)
+		if err != nil || resp.StatusCode != http.StatusOK {
+			return &order, fmt.Errorf("failed to fetch products from inventory-service")
+		}
+		defer resp.Body.Close()
+
+		var product models.Product
+		if err := json.NewDecoder(resp.Body).Decode(&product); err != nil {
+			return &order, fmt.Errorf("failed to decode product JSON: %w", err)
+		}
+
+		if product.Stock < item.Quantity {
+			log.Printf("insufficient stock for product %s, order auto cancelled. Product Stock: %d, Order Quantity: %d", item.ProductID, product.Stock, item.Quantity)
+			order.Status = "CANCELLED"
+			break
+		} else {
+			order.Status = "PENDING"
+		}
+	}
+
+	order.ID = primitive.NewObjectID()
+	order.CreatedAt = time.Now()
+	order.UpdatedAt = time.Now()
+	_, err := collection.InsertOne(ctx, order)
+	if err != nil {
+		return nil, err
+	}
+
+	// Enqueue the order in redis stream for further processing
+	args := &redis.XAddArgs{
+		Stream: s.streamKey,
+		Values: map[string]interface{}{"order_id": order.ID.Hex()},
+	}
+
+	if err := s.rdb.XAdd(context.Background(), args).Err(); err != nil {
+		log.Printf("failed to enqueue order: %v", err)
+	}
+
+	log.Printf("Order %s enqueued successfully\n", order.ID.Hex())
+
+	return &order, nil
+}
+
+// GetOrderByID fetches an order by its ID
+func (s *OrderService) GetOrderByID(id string) (*models.Order, error) {
+	collection := GetCollection(s.collectionName)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	objID, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		return nil, errors.New("invalid order ID")
+	}
+
+	var order models.Order
+	err = collection.FindOne(ctx, bson.M{"_id": objID}).Decode(&order)
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return &models.Order{}, nil
+		}
+		return nil, err
+	}
+	return &order, nil
+}
+
+// ListOrders fetches all orders, optionally filtered by status and cursor-based pagination
+func (s *OrderService) ListOrders(status string, cursor string, pageSize int64) ([]models.Order, string, error) {
+	collection := GetCollection(s.collectionName)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	filter := bson.M{}
+	if status != "" {
+		filter["status"] = status
+	}
+
+	// If cursor is provided, use it as starting point (ObjectID)
+	if cursor != "" {
+		lastID, err := primitive.ObjectIDFromHex(cursor)
+		if err != nil {
+			return nil, "", fmt.Errorf("invalid cursor")
+		}
+		filter["_id"] = bson.M{"$gt": lastID} // fetch documents with _id > lastID
+	}
+
+	// Sorted by _id ascending to maintain consistent pagination
+	findOptions := options.Find().
+		SetSort(bson.D{{Key: "_id", Value: 1}}).
+		SetLimit(pageSize)
+
+	cur, err := collection.Find(ctx, filter, findOptions)
+	if err != nil {
+		return nil, "", err
+	}
+	defer cur.Close(ctx)
+
+	var orders []models.Order
+	if err := cur.All(ctx, &orders); err != nil {
+		return nil, "", err
+	}
+
+	var nextCursor string
+	if len(orders) > 0 {
+		lastOrder := orders[len(orders)-1]
+		nextCursor = lastOrder.ID.Hex()
+	}
+
+	return orders, nextCursor, nil
+}
+
+// CancelOrder deletes the order but only if it’s still in PENDING status.
+func (s *OrderService) CancelOrder(id string) error {
+	collection := GetCollection(s.collectionName)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	objID, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		return errors.New("invalid order ID")
+	}
+
+	// Only delete if status is PENDING
+	res, err := collection.DeleteOne(
+		ctx,
+		bson.M{"_id": objID, "status": "PENDING"},
+	)
+	if err != nil {
+		return err
+	}
+	if res.DeletedCount == 0 {
+		return errors.New("order cannot be cancelled (either not PENDING or not found)")
+	}
+	return nil
+}

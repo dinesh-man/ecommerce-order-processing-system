@@ -1,1 +1,97 @@
-package order_serviceimport (	"testing"	"time"	"github.com/alicebob/miniredis/v2"	"github.com/dinesh-man/ecommerce-order-processing-system/order-service/service"	"github.com/dinesh-man/ecommerce-order-processing-system/pkg/models"	"github.com/redis/go-redis/v9"	"github.com/stretchr/testify/assert"	"go.mongodb.org/mongo-driver/bson"	"go.mongodb.org/mongo-driver/bson/primitive"	"go.mongodb.org/mongo-driver/mongo"	"go.mongodb.org/mongo-driver/mongo/integration/mtest")func TestListOrders(t *testing.T) {	order1ID := primitive.NewObjectID()	order2ID := primitive.NewObjectID()	order1 := bson.D{		{"_id", order1ID},		{"customer_id", "C001"},		{"items", bson.A{			bson.D{{"product_id", "P001"}, {"quantity", 2}},		}},		{"status", "PENDING"},		{"created_at", time.Now()},		{"updated_at", time.Now()},	}	order2 := bson.D{		{"_id", order2ID},		{"customer_id", "C002"},		{"items", bson.A{			bson.D{{"product_id", "P002"}, {"quantity", 1}},		}},		{"status", "CANCELLED"},		{"created_at", time.Now()},		{"updated_at", time.Now()},	}	var mt = mtest.New(t)	mt = mtest.New(t, mtest.NewOptions().ClientType(mtest.Mock))	//launch miniredis for testing purposes	mr, err := miniredis.Run()	if err != nil {		t.Fatalf("could not start miniredis: %v", err)	}	defer mr.Close()	// Connect go-redis client to miniredis	rc := redis.NewClient(&redis.Options{		Addr: mr.Addr(),	})	mt.Run("list all orders", func(mt *mtest.T) {		mt.AddMockResponses(			mtest.CreateCursorResponse(1, "orders.orders", mtest.FirstBatch, order1, order2),			mtest.CreateCursorResponse(0, "orders.orders", mtest.NextBatch))		service.GetCollection = func(name string) *mongo.Collection {			return mt.Coll		}		orderService := service.NewOrderService("orders", "", rc, "orders")		orders, nextCursor, err := orderService.ListOrders("", "", 2)		assert.NoError(t, err)		assert.Len(t, orders, 2)		assert.Equal(t, models.OrderStatus("PENDING"), models.Pending)		assert.Equal(t, order2ID.Hex(), nextCursor)	})	mt = mtest.New(t, mtest.NewOptions().ClientType(mtest.Mock))	mt.Run("list orders filtered by status with pagination", func(mt *mtest.T) {		mt.AddMockResponses(			mtest.CreateCursorResponse(1, "orders.orders", mtest.FirstBatch, order2),			mtest.CreateCursorResponse(0, "orders.orders", mtest.NextBatch),		)		service.GetCollection = func(name string) *mongo.Collection {			return mt.Coll		}		orderService := service.NewOrderService("orders", "", rc, "orders")		orders, nextCursor, err := orderService.ListOrders("CANCELLED", "", 1)		assert.NoError(t, err)		assert.Len(t, orders, 1)		assert.Equal(t, models.OrderStatus("CANCELLED"), models.Cancelled)		assert.Equal(t, order2ID.Hex(), nextCursor)	})}
+package order_service
+
+import (
+	"testing"
+	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/dinesh-man/ecommerce-order-processing-system/order-service/service"
+	"github.com/dinesh-man/ecommerce-order-processing-system/pkg/models"
+	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/integration/mtest"
+)
+
+func TestListOrders(t *testing.T) {
+	order1ID := primitive.NewObjectID()
+	order2ID := primitive.NewObjectID()
+
+	order1 := bson.D{
+		{"_id", order1ID},
+		{"customer_id", "C001"},
+		{"items", bson.A{
+			bson.D{{"product_id", "P001"}, {"quantity", 2}},
+		}},
+		{"status", "PENDING"},
+		{"created_at", time.Now()},
+		{"updated_at", time.Now()},
+	}
+
+	order2 := bson.D{
+		{"_id", order2ID},
+		{"customer_id", "C002"},
+		{"items", bson.A{
+			bson.D{{"product_id", "P002"}, {"quantity", 1}},
+		}},
+		{"status", "CANCELLED"},
+		{"created_at", time.Now()},
+		{"updated_at", time.Now()},
+	}
+
+	var mt = mtest.New(t)
+	mt = mtest.New(t, mtest.NewOptions().ClientType(mtest.Mock))
+
+	//launch miniredis for testing purposes
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("could not start miniredis: %v", err)
+	}
+	defer mr.Close()
+
+	// Connect go-redis client to miniredis
+	rc := redis.NewClient(&redis.Options{
+		Addr: mr.Addr(),
+	})
+
+	mt.Run("list all orders", func(mt *mtest.T) {
+
+		mt.AddMockResponses(
+			mtest.CreateCursorResponse(1, "orders.orders", mtest.FirstBatch, order1, order2),
+			mtest.CreateCursorResponse(0, "orders.orders", mtest.NextBatch))
+
+		service.GetCollection = func(name string) *mongo.Collection {
+			return mt.Coll
+		}
+
+		orderService := service.NewOrderService("orders", "", rc, "orders")
+		orders, nextCursor, err := orderService.ListOrders("", "", 2)
+		assert.NoError(t, err)
+		assert.Len(t, orders, 2)
+		assert.Equal(t, models.OrderStatus("PENDING"), models.Pending)
+		assert.Equal(t, order2ID.Hex(), nextCursor)
+	})
+
+	mt = mtest.New(t, mtest.NewOptions().ClientType(mtest.Mock))
+
+	mt.Run("list orders filtered by status with pagination", func(mt *mtest.T) {
+
+		mt.AddMockResponses(
+			mtest.CreateCursorResponse(1, "orders.orders", mtest.FirstBatch, order2),
+			mtest.CreateCursorResponse(0, "orders.orders", mtest.NextBatch),
+		)
+
+		service.GetCollection = func(name string) *mongo.Collection {
+			return mt.Coll
+		}
+
+		orderService := service.NewOrderService("orders", "", rc, "orders")
+		orders, nextCursor, err := orderService.ListOrders("CANCELLED", "", 1)
+		assert.NoError(t, err)
+		assert.Len(t, orders, 1)
+		assert.Equal(t, models.OrderStatus("CANCELLED"), models.Cancelled)
+		assert.Equal(t, order2ID.Hex(), nextCursor)
+	})
+}

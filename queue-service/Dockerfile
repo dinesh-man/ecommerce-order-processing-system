@@ -1,1 +1,22 @@
-FROM golang:1.24-bullseye AS builderWORKDIR /ecommerce-order-processing-system# Copy Go codeCOPY go.mod go.sum ./RUN go mod downloadCOPY queue-service/ queue-service/WORKDIR /ecommerce-order-processing-system/queue-serviceRUN CGO_ENABLED=0 GOOS=linux go build -o queue-service .FROM alpine:3.19WORKDIR /root/COPY --from=builder /ecommerce-order-processing-system/queue-service/queue-service .EXPOSE 8080 6379CMD ["./queue-service"]
+FROM golang:1.24-bullseye AS builder
+
+WORKDIR /ecommerce-order-processing-system
+
+# Copy Go code
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY queue-service/ queue-service/
+
+WORKDIR /ecommerce-order-processing-system/queue-service
+RUN CGO_ENABLED=0 GOOS=linux go build -o queue-service .
+
+FROM alpine:3.19
+
+WORKDIR /root/
+
+COPY --from=builder /ecommerce-order-processing-system/queue-service/queue-service .
+
+EXPOSE 8080 6379
+
+CMD ["./queue-service"]
