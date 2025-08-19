@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: queue-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: queue-service
+  template:
+    metadata:
+      labels:
+        app: queue-service
+    spec:
+      containers:
+        - name: redis-stream
+          image: redis:7
+          ports:
+            - containerPort: 6379
+          volumeMounts:
+            - mountPath: /data
+              name: redis-stream-data
+          args: ["--appendonly", "yes"]
+
+        - name: queue-service
+          image: queue-service:latest
+          ports:
+            - containerPort: 8080
+          imagePullPolicy: Never
+          env:
+            - name: REDIS_ADDR
+              value: "localhost:6379"
+            - name: STREAM_KEY
+              value: orders
+      volumes:
+        - name: redis-stream-data
+          persistentVolumeClaim:
+            claimName: redis-pvc

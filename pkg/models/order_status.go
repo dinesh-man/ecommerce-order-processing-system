@@ -1,0 +1,1 @@
+package models// OrderStatus type defines allowed statusestype OrderStatus stringconst (	Pending    OrderStatus = "PENDING"	Processing OrderStatus = "PROCESSING"	Shipped    OrderStatus = "SHIPPED"	Delivered  OrderStatus = "DELIVERED"	Cancelled  OrderStatus = "CANCELLED")

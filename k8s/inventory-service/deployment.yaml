@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inventory-service
+  template:
+    metadata:
+      labels:
+        app: inventory-service
+    spec:
+      containers:
+        - name: inventory-service
+          image: inventory-service:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          env:
+            - name: MONGODB_URI
+              value: mongodb+srv://cluster0.jqukrp9.mongodb.net/?authSource=%24external&authMechanism=MONGODB-X509&retryWrites=true&w=majority&appName=Cluster0
+            - name: MONGO_DB_NAME
+              value: order_processing_db
+            - name: COLLECTION_NAME
+              value: products
+            - name: CERT_PATH
+              value: /etc/certs/mongodb/cert.pem
+          volumeMounts:
+            - mountPath: /etc/certs/mongodb
+              name: mongodb-cert
+              readOnly: true
+      volumes:
+        - name: mongodb-cert
+          secret:
+            secretName: mongodb-cert

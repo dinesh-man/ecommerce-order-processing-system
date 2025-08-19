@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-processor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: order-processor
+  template:
+    metadata:
+      labels:
+        app: order-processor
+    spec:
+      containers:
+        - name: order-processor
+          image: order-processor:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          env:
+            - name: MONGODB_URI
+              value: mongodb+srv://cluster0.jqukrp9.mongodb.net/?authSource=%24external&authMechanism=MONGODB-X509&retryWrites=true&w=majority&appName=Cluster0
+            - name: MONGO_DB_NAME
+              value: order_processing_db
+            - name: COLLECTION_NAME
+              value: orders
+            - name: CERT_PATH
+              value: /etc/certs/mongodb/cert.pem
+            - name: REDIS_ADDR
+              value: queue-service:6379
+            - name: STREAM_KEY
+              value: orders
+          volumeMounts:
+            - mountPath: /etc/certs/mongodb
+              name: mongodb-cert
+              readOnly: true
+      volumes:
+        - name: mongodb-cert
+          secret:
+            secretName: mongodb-cert
