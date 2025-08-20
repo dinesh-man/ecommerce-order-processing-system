@@ -7,6 +7,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY queue-service/ queue-service/
+COPY pkg/ pkg/
 
 WORKDIR /ecommerce-order-processing-system/queue-service
 RUN CGO_ENABLED=0 GOOS=linux go build -o queue-service .

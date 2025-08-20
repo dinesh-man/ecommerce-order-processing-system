@@ -1,11 +1,17 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
+	"github.com/dinesh-man/ecommerce-order-processing-system/pkg/redis-stream"
 	"github.com/dinesh-man/ecommerce-order-processing-system/queue-service/queue"
 )
 
@@ -41,5 +47,31 @@ func main() {
 		w.Write([]byte(fmt.Sprintf("%d", res)))
 	})
 
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	server := &http.Server{Addr: ":8080"}
+
+	go func() {
+		log.Println("Queue service running on :8080")
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("HTTP server error: %v", err)
+		}
+	}()
+
+	// Listen for termination signals
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+
+	<-stop // Block until signal is received
+	log.Println("Shutdown signal received. Cleaning up...")
+
+	// Gracefully shutdown HTTP server
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := server.Shutdown(ctx); err != nil {
+		log.Printf("HTTP server shutdown error: %v", err)
+	}
+
+	// Close Redis connection
+	redis_stream.CloseRedis()
+
+	log.Println("Order service shutdown complete.")
 }

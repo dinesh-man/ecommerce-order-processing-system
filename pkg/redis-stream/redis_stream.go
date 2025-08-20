@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -19,9 +20,14 @@ func InitRedis() (*redis.Client, string) {
 		log.Fatal("REDIS_ADDR not specified")
 	}
 
-	StreamKey := os.Getenv("STREAM_KEY")
-	if StreamKey == "" {
+	streamKey := os.Getenv("STREAM_KEY")
+	if streamKey == "" {
 		log.Fatal("STREAM_KEY not specified")
+	}
+
+	consumerGroup := os.Getenv("CONSUMER_GROUP")
+	if consumerGroup == "" {
+		log.Fatal("CONSUMER_GROUP not specified")
 	}
 
 	// Connect to Redis
@@ -32,5 +38,20 @@ func InitRedis() (*redis.Client, string) {
 		log.Printf("Redis connection error:", err)
 	}
 
-	return rdb, StreamKey
+	err := rdb.XGroupCreateMkStream(ctx, streamKey, consumerGroup, "0").Err()
+	if err != nil && !strings.Contains(err.Error(), "BUSYGROUP") {
+		log.Fatalf("Failed to create consumer group: %v", err)
+	}
+
+	return rdb, streamKey
+}
+
+func CloseRedis() {
+	if rdb != nil {
+		if err := rdb.Close(); err != nil {
+			log.Printf("Error closing Redis connection: %v", err)
+		} else {
+			log.Println("Redis connection closed successfully")
+		}
+	}
 }

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -15,28 +16,48 @@ type OrderHandler struct {
 	service *service.OrderService
 }
 
+type ErrorResponse struct {
+	Message string `json:"message"`
+	Code    int    `json:"code"`
+}
+
 func NewOrderHandler(s *service.OrderService) *OrderHandler {
 	return &OrderHandler{service: s}
+}
+
+func writeJSONError(w http.ResponseWriter, message string, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(ErrorResponse{
+		Message: message,
+		Code:    code,
+	})
 }
 
 // CreateOrderHandler handles POST /order
 func (h *OrderHandler) CreateOrderHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Received %s request for %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		writeJSONError(w, fmt.Sprintf("Method not allowed: %s", r.Method), http.StatusMethodNotAllowed)
 		return
 	}
 
 	var order models.Order
 	if err := json.NewDecoder(r.Body).Decode(&order); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		writeJSONError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if len(order.Items) == 0 {
+		writeJSONError(w, "Order must contain at least one item", http.StatusBadRequest)
 		return
 	}
 
 	createdOrder, err := h.service.CreateOrder(order)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeJSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -47,18 +68,19 @@ func (h *OrderHandler) CreateOrderHandler(w http.ResponseWriter, r *http.Request
 
 // GetOrderHandler handles GET /order/?id=123
 func (h *OrderHandler) GetOrderHandler(w http.ResponseWriter, r *http.Request) {
+
 	log.Printf("Received %s request for %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
 
 	id := r.URL.Query().Get("id")
 
 	if id == "" {
-		http.Error(w, "Missing order id", http.StatusBadRequest)
+		writeJSONError(w, "Missing order id", http.StatusBadRequest)
 		return
 	}
 
 	order, err := h.service.GetOrderByID(id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		writeJSONError(w, err.Error(), http.StatusNotFound)
 		return
 	}
 
@@ -84,7 +106,7 @@ func (h *OrderHandler) ListOrdersHandler(w http.ResponseWriter, r *http.Request)
 
 	orders, nextCursor, err := h.service.ListOrders(status, cursor, pageSize)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeJSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -97,23 +119,24 @@ func (h *OrderHandler) ListOrdersHandler(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(response)
 }
 
-// CancelOrderHandler handles DELETE /orders/cancel?id=123
+// CancelOrderHandler handles DELETE /order/cancel?id=123
 func (h *OrderHandler) CancelOrderHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Received %s request for %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
 
 	id := r.URL.Query().Get("id")
 
 	if id == "" {
-		http.Error(w, "missing order id", http.StatusBadRequest)
+		writeJSONError(w, "Missing order id", http.StatusBadRequest)
 		return
 	}
 
 	err := h.service.CancelOrder(id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"message":"Order cancelled successfully"}`))
 }

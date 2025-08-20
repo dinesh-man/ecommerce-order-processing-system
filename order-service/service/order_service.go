@@ -62,15 +62,12 @@ func (s *OrderService) CreateOrder(order models.Order) (*models.Order, error) {
 		}
 
 		if product.Stock < item.Quantity {
-			log.Printf("insufficient stock for product %s, order auto cancelled. Product Stock: %d, Order Quantity: %d", item.ProductID, product.Stock, item.Quantity)
-			order.Status = "CANCELLED"
-			break
-		} else {
-			order.Status = "PENDING"
+			return &order, fmt.Errorf("insufficient stock for product %s, order auto cancelled. Available Stock: %d, Order Quantity: %d", item.ProductID, product.Stock, item.Quantity)
 		}
 	}
 
 	order.ID = primitive.NewObjectID()
+	order.Status = "PENDING"
 	order.CreatedAt = time.Now()
 	order.UpdatedAt = time.Now()
 	_, err := collection.InsertOne(ctx, order)
@@ -78,17 +75,25 @@ func (s *OrderService) CreateOrder(order models.Order) (*models.Order, error) {
 		return nil, err
 	}
 
+	itemsJSON, err := json.Marshal(order.Items)
+	if err != nil {
+		log.Printf("failed to marshal products: %v", err)
+		return &order, fmt.Errorf("failed to marshal products: %w", err)
+	}
+
 	// Enqueue the order in redis stream for further processing
 	args := &redis.XAddArgs{
 		Stream: s.streamKey,
-		Values: map[string]interface{}{"order_id": order.ID.Hex()},
+		Values: map[string]interface{}{
+			"order_id": order.ID.Hex(),
+			"products": string(itemsJSON)},
 	}
 
 	if err := s.rdb.XAdd(context.Background(), args).Err(); err != nil {
 		log.Printf("failed to enqueue order: %v", err)
+	} else {
+		log.Printf("Order %s enqueued successfully\n", order.ID.Hex())
 	}
-
-	log.Printf("Order %s enqueued successfully\n", order.ID.Hex())
 
 	return &order, nil
 }
@@ -182,5 +187,6 @@ func (s *OrderService) CancelOrder(id string) error {
 	if res.DeletedCount == 0 {
 		return errors.New("order cannot be cancelled (either not PENDING or not found)")
 	}
+
 	return nil
 }

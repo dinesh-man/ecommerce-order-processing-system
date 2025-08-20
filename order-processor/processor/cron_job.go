@@ -11,25 +11,34 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-func RunJob(redisClient *redis.Client, streamKey string, collectionName string) {
-	ticker := time.NewTicker(1 * time.Minute)
+func RunJob(redisClient *redis.Client, streamKey string, group string, consumerID string, collectionName string, jobRunIntervalMints time.Duration) {
+	ticker := time.NewTicker(jobRunIntervalMints)
 	defer ticker.Stop()
 
 	for {
 		log.Println("Cron job triggered...")
-		processOrders(redisClient, streamKey, collectionName)
+		ctx := context.Background()
+		processOrders(ctx, redisClient, streamKey, group, consumerID, collectionName)
 		<-ticker.C
 	}
 }
 
 // Updates PENDING orders to PROCESSING every 5 minutes
-func processOrders(rdb *redis.Client, streamKey string, collectionName string) {
-	ctx := context.Background()
+func processOrders(ctx context.Context, rdb *redis.Client, streamKey string, group string, consumerID, collectionName string) {
 
-	//Read Redis queue
-	res, err := rdb.XRead(ctx, &redis.XReadArgs{
-		Streams: []string{streamKey, "0"},
-		Block:   5 * time.Second,
+	// Check if pending messages exist in the stream
+	reclaimedMsgs := ReclaimStuckMessages(ctx, rdb, streamKey, group, consumerID)
+	if len(reclaimedMsgs) > 0 {
+		log.Printf("Reprocessing %d stuck messages from the stream", len(reclaimedMsgs))
+		digestMessages(ctx, rdb, reclaimedMsgs, streamKey, group, collectionName)
+	}
+
+	//Read Redis consumer group for new messages
+	res, err := rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
+		Group:    group,
+		Consumer: consumerID,
+		Streams:  []string{streamKey, ">"},
+		Block:    5 * time.Second,
 	}).Result()
 
 	if err != nil && err != redis.Nil {
@@ -37,37 +46,43 @@ func processOrders(rdb *redis.Client, streamKey string, collectionName string) {
 		return
 	}
 
-	var pendingOrderIDs []primitive.ObjectID
-	var processedMessages []redis.XMessage
+	var newMsgs []redis.XMessage
 
 	for _, stream := range res {
 		for _, msg := range stream.Messages {
-			orderIDStr, ok := msg.Values["order_id"].(string)
-			if !ok {
-				log.Printf("Invalid order_id format: %v", msg.Values["order_id"])
-				continue
-			}
-
-			orderID, err := primitive.ObjectIDFromHex(orderIDStr)
-			if err != nil {
-				log.Printf("Invalid ObjectID: %s, skipping", orderIDStr)
-				continue
-			}
-
-			pendingOrderIDs = append(pendingOrderIDs, orderID)
-			processedMessages = append(processedMessages, msg)
-			log.Printf("Processing order %s in cron job", orderID)
+			claimed := rdb.XClaim(ctx, &redis.XClaimArgs{
+				Stream:   streamKey,
+				Group:    group,
+				Consumer: consumerID,
+				Messages: []string{msg.ID},
+			}).Val()
+			newMsgs = append(newMsgs, claimed...)
 		}
 	}
 
-	if len(pendingOrderIDs) == 0 {
-		log.Println("No orders to process in the queue")
+	if len(newMsgs) == 0 {
+		log.Println("No new messages to process")
 		return
+	}
+
+	digestMessages(ctx, rdb, newMsgs, streamKey, group, collectionName)
+}
+
+func digestMessages(ctx context.Context, rdb *redis.Client, messages []redis.XMessage, streamKey string, group string, collectionName string) {
+
+	var pendingOrderIDs []primitive.ObjectID
+
+	for _, msg := range messages {
+		orderIDStr, _ := msg.Values["order_id"].(string)
+		orderID, _ := primitive.ObjectIDFromHex(orderIDStr)
+		pendingOrderIDs = append(pendingOrderIDs, orderID)
+
+		log.Printf("Processing order: %s", orderIDStr)
 	}
 
 	//Update order status PENDING -> PROCESSING in bulk
 	filter := bson.M{"_id": bson.M{"$in": pendingOrderIDs}, "status": "PENDING"}
-	update := bson.M{"$set": bson.M{"status": "PROCESSING"}}
+	update := bson.M{"$set": bson.M{"status": "PROCESSING", "updated_at": time.Now()}}
 	collection := mongodb.GetCollection(collectionName)
 
 	result, err := collection.UpdateMany(ctx, filter, update)
@@ -79,7 +94,11 @@ func processOrders(rdb *redis.Client, streamKey string, collectionName string) {
 	log.Printf("Bulk update completed. Orders updated to PROCESSING: %d", result.ModifiedCount)
 
 	//Clean up stream entries only after DB update succeeds
-	for _, msg := range processedMessages {
+	for _, msg := range messages {
+		if err := rdb.XAck(ctx, streamKey, group, msg.ID).Err(); err != nil {
+			log.Printf("Failed to ACK stream entry %s: %v", msg.ID, err)
+			continue
+		}
 		if err := rdb.XDel(ctx, streamKey, msg.ID).Err(); err != nil {
 			log.Printf("Failed to delete stream entry %s: %v", msg.ID, err)
 		} else {

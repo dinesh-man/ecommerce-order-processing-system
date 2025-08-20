@@ -31,6 +31,8 @@ spec:
               value: queue-service:6379
             - name: STREAM_KEY
               value: orders
+            - name: CONSUMER_GROUP
+              value: order-processor-group
             - name: CERT_PATH
               value: /etc/certs/mongodb/cert.pem
           volumeMounts:

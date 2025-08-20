@@ -31,6 +31,10 @@ spec:
               value: queue-service:6379
             - name: STREAM_KEY
               value: orders
+            - name: CONSUMER_GROUP
+              value: order-processor-group
+            - name: JOB_RUN_INTERVAL_MINUTES
+              value: 1m
           volumeMounts:
             - mountPath: /etc/certs/mongodb
               name: mongodb-cert

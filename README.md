@@ -96,8 +96,8 @@ eval $(minikube docker-env)  # Point local docker to minikube
 cd /ecommerce-order-processing # Navigate to the project root directory
 
 docker build -t inventory-service:latest -f ./inventory-service/Dockerfile .
-docker build -t order-service:latest -f ./order-service/Dockerfile .
 docker build -t queue-service:latest -f ./queue-service/Dockerfile .
+docker build -t order-service:latest -f ./order-service/Dockerfile .
 docker build -t order-processor:latest -f ./order-processor/Dockerfile .
 ```
 
@@ -126,6 +126,11 @@ kubectl get pods
 kubectl get svc
 kubectl logs <pod-name> --follow  # Check real-time logs for any service
 ```
+**Format and Lint Code**
+```
+go fmt ./...
+```
+
 All microservices follow the same pattern: Dockerfile, Kubernetes manifests, and environment configuration.
 
 ### To Do
