@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -14,6 +15,20 @@ import (
 	"github.com/dinesh-man/ecommerce-order-processing-system/pkg/redis-stream"
 	"github.com/dinesh-man/ecommerce-order-processing-system/queue-service/queue"
 )
+
+type Response struct {
+	Message string `json:"message"`
+	Code    int    `json:"code"`
+}
+
+func writeJSONResponse(w http.ResponseWriter, message string, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(Response{
+		Message: message,
+		Code:    code,
+	})
+}
 
 func main() {
 	redisAddr := os.Getenv("REDIS_ADDR")
@@ -35,16 +50,16 @@ func main() {
 	log.Println("Redis Queue service is running on port 6379")
 
 	http.HandleFunc("/queue/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("OK"))
+		writeJSONResponse(w, "OK", http.StatusOK)
 	})
 
 	http.HandleFunc("/queue/size", func(w http.ResponseWriter, r *http.Request) {
 		res, err := queue.QueueLength(streamKey)
 		if err != nil {
-			http.Error(w, "Failed to get queue length: "+err.Error(), http.StatusInternalServerError)
+			writeJSONResponse(w, fmt.Sprintf("Failed to get queue length: %s", err.Error()), http.StatusInternalServerError)
 			return
 		}
-		w.Write([]byte(fmt.Sprintf("%d", res)))
+		writeJSONResponse(w, fmt.Sprintf("Current queue size is %d", res), http.StatusOK)
 	})
 
 	server := &http.Server{Addr: ":8080"}

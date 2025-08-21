@@ -29,5 +29,5 @@ func InitRedis(addr string) error {
 }
 
 func QueueLength(streamKey string) (int64, error) {
-	return rdb.LLen(ctx, streamKey).Result()
+	return rdb.XLen(ctx, streamKey).Result()
 }

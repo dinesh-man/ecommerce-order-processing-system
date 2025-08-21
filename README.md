@@ -87,6 +87,8 @@ Install minikube from [here](https://minikube.sigs.k8s.io/docs/start/?arch=%2Fwi
 
 Install Docker from [here](https://docs.docker.com/desktop/setup/install/windows-install/)
 
+Install Postman (for API testing) from [here](https://www.postman.com/downloads/)
+
 Clone this repository: `git clone https://github.com/dinesh-man/ecommerce-order-processing-system.git`
 
 **Build Docker images for all services**
@@ -126,6 +128,16 @@ kubectl get pods
 kubectl get svc
 kubectl logs <pod-name> --follow  # Check real-time logs for any service
 ```
+
+**Test the APIs using Postman or curl**
+```
+# Enable port forwarding for the services to access it locally:
+kubectl port-forward svc/order-service 8080:80
+kubectl port-forward svc/inventory-service 8081:80
+kubectl port-forward svc/queue-service 8082:80
+kubectl port-forward svc/order-processor 8083:80
+```
+
 **Format and Lint Code**
 ```
 go fmt ./...
